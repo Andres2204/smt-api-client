@@ -1,0 +1,94 @@
+[package]
+edition      = "2024"
+name         = "smt-api-client"
+rust-version = "1.88"
+version      = "0.1.0"
+default-run = "smt-api-client"
+
+[[bin]]
+name = "smt-api-client"
+path = "src/bin/main.rs"
+
+[dependencies]
+defmt = "1.0.1"
+static_cell = "2.1.1"
+esp-println = { version = "0.16.1", features = ["defmt-espflash", "esp32"] }
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32"] }
+esp-alloc = { version = "0.9.0", features = ["defmt"] }
+
+esp-hal = { version = "1.0.0", features = ["defmt", "esp32", "unstable"] }
+esp-rtos = { version = "0.2.0", features = [
+  "defmt",
+  "embassy",
+  "esp-alloc",
+  "esp-radio",
+  "esp32",
+] }
+esp-radio = { version = "0.17.0", features = [
+  "defmt",
+  "esp-alloc",
+  "esp32",
+  "smoltcp",
+  "unstable",
+  "wifi",
+] }
+
+embedded-hal-async = "1.0.0"
+
+# for more networking protocol support see https://crates.io/crates/edge-net
+embassy-executor = { version = "0.9.1", features = ["defmt", "executor-thread"] }
+embassy-sync = { version = "0.8", features = ["defmt"] }   # ≈0.6 para compatibilidad con embassy 0.9+
+embassy-time = { version = "0.5.1", features = ["defmt"] }
+embassy-embedded-hal = "0.6.0"
+embassy-net = { version = "0.7.1", features = [
+  "defmt",
+  "dhcpv4",
+  "medium-ethernet",
+  "tcp",
+  "udp",
+  #addition:
+  "dns",
+] }
+
+
+
+smoltcp = { version = "0.12.0", default-features = false, features = [
+  "defmt",
+  "medium-ethernet",
+  "multicast",
+  "proto-dhcpv4",
+  "proto-dns",
+  "proto-ipv4",
+  "socket-dns",
+  "socket-icmp",
+  "socket-raw",
+  "socket-tcp",
+  "socket-udp",
+  # addition:
+  "dns-max-server-count-4",
+] }
+
+critical-section = "1.2.0"
+
+reqwless = { version = "0.13.0", default-features = false, features = [
+  "embedded-tls",
+]}
+
+# Sensors
+bh1750-embedded = { version = "0.1.0", features = ["async"] } # lux
+heapless = "0.9.2"
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units    = 1     # LLVM can perform better optimizations using a single thread
+debug            = 2
+debug-assertions = false
+incremental      = false
+lto              = 'fat'
+opt-level        = 's'
+overflow-checks  = false
+
