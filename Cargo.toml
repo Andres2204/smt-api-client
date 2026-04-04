@@ -5,6 +5,14 @@ rust-version = "1.88"
 version      = "0.1.0"
 default-run = "smt-api-client"
 
+[features]
+default = ["http-api"]
+http-api = []
+mqtt = []
+ble = []
+radio = []
+outside-communication = ["http-api", "mqtt", "ble", "radio"]
+
 [[bin]]
 name = "smt-api-client"
 path = "src/bin/main.rs"
@@ -72,6 +80,7 @@ critical-section = "1.2.0"
 
 reqwless = { version = "0.13.0", default-features = false, features = [
   "embedded-tls",
+  "defmt"
 ]}
 
 # Sensors

@@ -10,33 +10,26 @@ reason = "mem::forget is generally not safe to do with esp_hal types, especially
 use defmt::info;
 use esp_println::{self as _, println};
 
-use static_cell::StaticCell;
+use static_cell::{ConstStaticCell, StaticCell};
 use esp_rtos::embassy::Executor;
 use esp_rtos::start_second_core;
-use esp_radio::wifi::{
-    ClientConfig, ModeConfig, ScanConfig, WifiController, WifiDevice, WifiEvent, WifiStaState,
-};
 
 use embassy_executor::Spawner;
-use embassy_net::{
-    dns::DnsSocket, tcp::client::{TcpClient, TcpClientState}, DhcpConfig, Runner,
-    Stack,
-    StackResources,
-};
-use embassy_time::{Duration, Timer};
+use embassy_net::{DhcpConfig, StackResources};
 
 use esp_hal::clock::CpuClock;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::rng::Rng;
 use esp_hal::timer::timg::TimerGroup;
 
-use reqwless::client::{HttpClient, TlsConfig};
-use smt_api_client::tasks::wifi::{http_api_task, telemetry_task, wait_for_connection, net_task};
-
 use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;
 use esp_hal::{i2c::master::{Config, I2c}, Async};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
-use smt_api_client::events::SENSOR_CH;
+use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+use embassy_sync::pubsub::PubSubChannel;
+
+use smt_api_client::tasks::wifi::{telemetry_task, net_task, wifi_connection_task};
+use smt_api_client::events::{Measurements, SENSOR_CH};
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -89,7 +82,7 @@ async fn main(spawner: Spawner) -> ! {
     let scl = peripherals.GPIO22;
 
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
-    let software_interrupt = sw_int.software_interrupt2;
+    let _software_interrupt = sw_int.software_interrupt2;
     let cpu1_main = move |spawner: Spawner| {
         let bme_pub = SENSOR_CH.dyn_publisher().unwrap();
         let bh_pub = SENSOR_CH.dyn_publisher().unwrap();
@@ -123,21 +116,21 @@ async fn main(spawner: Spawner) -> ! {
     //
     // WIFI INITIALIZATION
     //
-    info!("Setting up network stack");
+    info!("Setting up network _stack");
     static WIFI_INIT: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
     let radio_init = WIFI_INIT.init_with(|| { esp_radio::init().expect("Failed to initialize radio controller") });
 
-    let (mut wifi_controller, interfaces) = esp_radio::wifi::new(radio_init, peripherals.WIFI, Default::default())
+    let (wifi_controller, interfaces) = esp_radio::wifi::new(radio_init, peripherals.WIFI, Default::default())
             .expect("Failed to initialize Wi-Fi controller");
     let wifi_interface = interfaces.sta;
 
-    // init network stack (with dhcp)
+    // init network _stack (with dhcp)
     static STACK_RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
     let stack_resources = STACK_RESOURCES.init_with(|| { StackResources::<5>::new() });
     let rng = Rng::new();
     let net_seed = rng.random() as u64 | ((rng.random() as u64) << 32);
     let config = embassy_net::Config::dhcpv4(DhcpConfig::default());
-    let (stack, runner) = embassy_net::new(
+    let (_stack, runner) = embassy_net::new(
         wifi_interface,
         config,
         stack_resources,
@@ -147,10 +140,18 @@ async fn main(spawner: Spawner) -> ! {
     //
     //  Spawn tasks (Telemetry and radio connections)
     //
+
+    // Pub Sub Channel between telemtry and Communications tasks
+
+    static DIVIDE_TO_EXTERIOR_CHANNEL: ConstStaticCell<PubSubChannel<CriticalSectionRawMutex, Measurements, 16, 4, 1>> = ConstStaticCell::new(PubSubChannel::new());
+    let dtec = DIVIDE_TO_EXTERIOR_CHANNEL.take();
+
     spawner.spawn(net_task(runner)).ok();
     spawner.spawn(wifi_connection_task(wifi_controller, SSID, PASSWORD)).ok();
-    spawner.spawn(telemetry_task(SENSOR_CH.dyn_subscriber().unwrap())).ok();
-    spawner.spawn(http_api_task(stack)).ok();
+    spawner.spawn(telemetry_task(SENSOR_CH.dyn_subscriber().unwrap(), dtec.dyn_publisher().unwrap())).ok();
+
+    #[cfg(feature = "http-api")]
+    spawner.spawn(smt_api_client::tasks::wifi::http_api_task(_stack, dtec.dyn_subscriber().unwrap())).ok();
 
     loop {
         //info!("Memory stats: {}", esp_alloc::HEAP.stats());

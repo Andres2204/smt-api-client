@@ -11,7 +11,7 @@ use embassy_net::{Runner, Stack};
 use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_time::{Duration, Timer, WithTimeout};
-use embassy_sync::pubsub::DynSubscriber;
+use embassy_sync::pubsub::{DynPublisher, DynSubscriber};
 use heapless::Vec;
 use reqwless::client::{HttpClient, TlsConfig};
 use crate::events::{Measurements, SENSOR_CH_CAP};
@@ -79,7 +79,7 @@ pub async fn wifi_connection_task(mut wifi: WifiController<'static>, ssid: &'sta
 }
 
 #[embassy_executor::task]
-pub async fn http_api_task(stack: Stack<'static>) {
+pub async fn http_api_task(stack: Stack<'static>, mut connection_channel: DynSubscriber<'static, Measurements>) {
     let seed = Rng::new().random() as u64;
     let mut rx_buf = [0; 4096];
     let mut tx_buf = [0; 4096];
@@ -96,21 +96,45 @@ pub async fn http_api_task(stack: Stack<'static>) {
 
     let mut client = HttpClient::new_with_tls(&tcp, &dns, tls);
     loop {
-        stack.wait_config_up().await;
-        // todo: save ip (if let Some(config) = stack.config_v4() { config.address}
+        if let Some(m) = connection_channel.try_next_message_pure() {
+            stack.wait_config_up().await;
+            // todo: save ip (if let Some(config) = stack.config_v4() { config.address }
+            // Todo: complete match pattern
 
-        make_request(&mut client).await;
+            make_request(&mut client, m).await;
+        }
+
+
+
         Timer::after(Duration::from_secs(10)).await;
     }
 }
 
-async fn make_request(client: &mut HttpClient<'_, TcpClient<'_, 1, 4096, 4096>, DnsSocket<'_>>) {
+async fn make_request(client: &mut HttpClient<'_, TcpClient<'_, 1, 4096, 4096>, DnsSocket<'_>>, _body: Measurements) {
     info!("[WIFI REQUEST] Making a request");
+    let mut buffer = [0u8; 4096];
+    let url: &str = "https://rickandmortyapi.com/api";
+    let mut http_request = client.request(
+        reqwless::request::Method::GET,
+        url
+    ).await.unwrap();
+
+    let response = http_request.send(&mut buffer).await;
+
+    match response {
+        Ok(r) => {
+            let res = r.body().read_to_end().await.unwrap();
+            info!("[WIFI REQUEST] Response _body: {:?}", core::str::from_utf8(&res).unwrap());
+        }
+        Err(e) => { warn!("Error while making HTTP request: {}", e); }
+    }
+
+
     Timer::after(Duration::from_secs(1)).await;
 }
 
 #[embassy_executor::task]
-pub async fn telemetry_task(mut sensors_channel: DynSubscriber<'static, Measurements>) {
+pub async fn telemetry_task(mut sensors_channel: DynSubscriber<'static, Measurements>, connection_channel: DynPublisher<'static, Measurements>) {
     info!("Telemetry task started");
     loop {
 
@@ -121,9 +145,10 @@ pub async fn telemetry_task(mut sensors_channel: DynSubscriber<'static, Measurem
 
         if !measures.is_empty() {
             debug!("Telemetry: Measures received: {}", measures.len());
-            for m in measures {
+            for m in &measures {
                 debug!("\t{:?}", m);
             }
+            connection_channel.publish(measures[0]).await;
         } else {
             debug!("No measurements found");
         }

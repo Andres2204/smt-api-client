@@ -1,6 +1,4 @@
-use defmt::{info, error, debug, Format};
-
-use embedded_hal_async::i2c::I2c as _;
+use defmt::{info, error, debug};
 use esp_hal::{i2c::master::I2c, Async};
 use embassy_executor::task;
 use embassy_time::{Timer, Duration};
