@@ -1,3 +1,5 @@
+use alloc::borrow::ToOwned;
+use heapless::String;
 use defmt::{info, warn, debug};
 use esp_println::println;
 use esp_hal::rng::Rng;
@@ -12,8 +14,9 @@ use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_time::{Duration, Timer, WithTimeout};
 use embassy_sync::pubsub::{DynPublisher, DynSubscriber};
-use heapless::Vec;
+use heapless::{format, Vec};
 use reqwless::client::{HttpClient, TlsConfig};
+use reqwless::request::RequestBuilder;
 use crate::events::{Measurements, SENSOR_CH_CAP};
 
 #[embassy_executor::task]
@@ -98,10 +101,14 @@ pub async fn http_api_task(stack: Stack<'static>, mut connection_channel: DynSub
     loop {
         if let Some(m) = connection_channel.try_next_message_pure() {
             stack.wait_config_up().await;
-            // todo: save ip (if let Some(config) = stack.config_v4() { config.address }
+            if let Some(config) = stack.config_v4() { // todo: save ip
+                info!("[HTTP API] this is my ip {}, hd: {}", config.address, stack.hardware_address());
+            }
             // Todo: complete match pattern
+            let mut data: String<128> = String::new();
+            m.to_json(&mut data);
 
-            make_request(&mut client, m).await;
+            make_request(&mut client, data.as_bytes()).await;
         }
 
 
@@ -110,21 +117,21 @@ pub async fn http_api_task(stack: Stack<'static>, mut connection_channel: DynSub
     }
 }
 
-async fn make_request(client: &mut HttpClient<'_, TcpClient<'_, 1, 4096, 4096>, DnsSocket<'_>>, _body: Measurements) {
+async fn make_request(client: &mut HttpClient<'_, TcpClient<'_, 1, 4096, 4096>, DnsSocket<'_>>, body: &[u8]) {
     info!("[WIFI REQUEST] Making a request");
     let mut buffer = [0u8; 4096];
     let url: &str = "https://rickandmortyapi.com/api";
     let mut http_request = client.request(
-        reqwless::request::Method::GET,
+        reqwless::request::Method::POST,
         url
     ).await.unwrap();
 
-    let response = http_request.send(&mut buffer).await;
-
+    let mut request =  http_request.body(body);
+    let response = request.send(&mut buffer).await;
     match response {
-        Ok(r) => {
-            let res = r.body().read_to_end().await.unwrap();
-            info!("[WIFI REQUEST] Response _body: {:?}", core::str::from_utf8(&res).unwrap());
+        Ok(res) => {
+            let r = res.body().read_to_end().await.unwrap();
+            info!("[WIFI REQUEST] Response body: {:?}", core::str::from_utf8(r).unwrap());
         }
         Err(e) => { warn!("Error while making HTTP request: {}", e); }
     }

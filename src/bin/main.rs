@@ -7,7 +7,7 @@ reason = "mem::forget is generally not safe to do with esp_hal types, especially
 )]
 #![deny(clippy::large_stack_frames)]
 
-use defmt::info;
+use defmt::{info, debug};
 use esp_println::{self as _, println};
 
 use static_cell::{ConstStaticCell, StaticCell};
@@ -27,7 +27,6 @@ use esp_hal::{i2c::master::{Config, I2c}, Async};
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
-
 use smt_api_client::tasks::wifi::{telemetry_task, net_task, wifi_connection_task};
 use smt_api_client::events::{Measurements, SENSOR_CH};
 
@@ -74,7 +73,7 @@ async fn main(spawner: Spawner) -> ! {
     //  SECOND CORE STACK AND MAIN FUNCTION
     //
     // TODO: use feature to wrap it
-    info!("Launching i2c sensor tasks");
+    debug!("Launching i2c sensor tasks");
 
     // I2C protocol pinout
     let i2c0 = peripherals.I2C0;
@@ -84,14 +83,32 @@ async fn main(spawner: Spawner) -> ! {
     let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
     let _software_interrupt = sw_int.software_interrupt2;
     let cpu1_main = move |spawner: Spawner| {
-        let bme_pub = SENSOR_CH.dyn_publisher().unwrap();
-        let bh_pub = SENSOR_CH.dyn_publisher().unwrap();
         static I2C_BUS: StaticCell<Mutex<NoopRawMutex, I2c<'static, Async>>> = StaticCell::new();
         let i2c = I2c::new(i2c0, Config::default()).unwrap().with_scl(scl).with_sda(sda).into_async();
         let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
 
-        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(I2cDevice::new(i2c_bus), bme_pub)).ok();
-        spawner.spawn(smt_api_client::tasks::sensors::bh1750_task(I2cDevice::new(i2c_bus), bh_pub)).ok();
+        // i2c scanner
+        spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(
+            I2cDevice::new(i2c_bus),
+        )).ok();
+
+        /*
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(
+            I2cDevice::new(i2c_bus),
+            SENSOR_CH.dyn_publisher().unwrap(),
+            0x72)).ok();
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(
+            I2cDevice::new(i2c_bus),
+            SENSOR_CH.dyn_publisher().unwrap(),
+            0x73)).ok();
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(
+            I2cDevice::new(i2c_bus),
+            SENSOR_CH.dyn_publisher().unwrap(),
+            0x74)).ok();
+        spawner.spawn(smt_api_client::tasks::sensors::bh1750_task(
+            I2cDevice::new(i2c_bus),
+            SENSOR_CH.dyn_publisher().unwrap())).ok();
+        */
     };
 
     #[allow(static_mut_refs)]
@@ -113,45 +130,53 @@ async fn main(spawner: Spawner) -> ! {
         );
     }
 
-    //
-    // WIFI INITIALIZATION
-    //
-    info!("Setting up network _stack");
-    static WIFI_INIT: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
-    let radio_init = WIFI_INIT.init_with(|| { esp_radio::init().expect("Failed to initialize radio controller") });
 
-    let (wifi_controller, interfaces) = esp_radio::wifi::new(radio_init, peripherals.WIFI, Default::default())
+    #[cfg(feature = "wifi")]
+    {
+        //
+        // WIFI INITIALIZATION
+        //
+        info!("Setting up network _stack");
+        static WIFI_INIT: StaticCell<esp_radio::Controller<'static>> = StaticCell::new();
+        let radio_init = WIFI_INIT.init_with(|| { esp_radio::init().expect("Failed to initialize radio controller") });
+
+        let (wifi_controller, interfaces) = esp_radio::wifi::new(radio_init, peripherals.WIFI, Default::default())
             .expect("Failed to initialize Wi-Fi controller");
-    let wifi_interface = interfaces.sta;
+        let wifi_interface = interfaces.sta;
 
-    // init network _stack (with dhcp)
-    static STACK_RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
-    let stack_resources = STACK_RESOURCES.init_with(|| { StackResources::<5>::new() });
-    let rng = Rng::new();
-    let net_seed = rng.random() as u64 | ((rng.random() as u64) << 32);
-    let config = embassy_net::Config::dhcpv4(DhcpConfig::default());
-    let (_stack, runner) = embassy_net::new(
-        wifi_interface,
-        config,
-        stack_resources,
-        net_seed
-    );
+        // init network _stack (with dhcp)
+        static STACK_RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
+        let stack_resources = STACK_RESOURCES.init_with(|| { StackResources::<5>::new() });
+        let rng = Rng::new();
+        let net_seed = rng.random() as u64 | ((rng.random() as u64) << 32);
+        let config = embassy_net::Config::dhcpv4(DhcpConfig::default());
+        let (_stack, runner) = embassy_net::new(
+            wifi_interface,
+            config,
+            stack_resources,
+            net_seed
+        );
 
-    //
-    //  Spawn tasks (Telemetry and radio connections)
-    //
+        //
+        //  Spawn tasks (Telemetry and radio connections)
+        //
 
-    // Pub Sub Channel between telemtry and Communications tasks
+        // Pub Sub Channel between telemtry and Communications tasks
 
-    static DIVIDE_TO_EXTERIOR_CHANNEL: ConstStaticCell<PubSubChannel<CriticalSectionRawMutex, Measurements, 16, 4, 1>> = ConstStaticCell::new(PubSubChannel::new());
-    let dtec = DIVIDE_TO_EXTERIOR_CHANNEL.take();
+        static DIVIDE_TO_EXTERIOR_CHANNEL: ConstStaticCell<PubSubChannel<CriticalSectionRawMutex, Measurements, 16, 4, 1>> = ConstStaticCell::new(PubSubChannel::new());
+        let dtec = DIVIDE_TO_EXTERIOR_CHANNEL.take();
 
-    spawner.spawn(net_task(runner)).ok();
-    spawner.spawn(wifi_connection_task(wifi_controller, SSID, PASSWORD)).ok();
-    spawner.spawn(telemetry_task(SENSOR_CH.dyn_subscriber().unwrap(), dtec.dyn_publisher().unwrap())).ok();
+        spawner.spawn(net_task(runner)).ok();
+        spawner.spawn(wifi_connection_task(wifi_controller, SSID, PASSWORD)).ok();
+        spawner.spawn(telemetry_task(SENSOR_CH.dyn_subscriber().unwrap(), dtec.dyn_publisher().unwrap())).ok();
+
+    }
 
     #[cfg(feature = "http-api")]
     spawner.spawn(smt_api_client::tasks::wifi::http_api_task(_stack, dtec.dyn_subscriber().unwrap())).ok();
+
+    // #[cfg(not(feature = "mqtt"))]
+    // spawner.spawn().ok();
 
     loop {
         //info!("Memory stats: {}", esp_alloc::HEAP.stats());
@@ -159,3 +184,4 @@ async fn main(spawner: Spawner) -> ! {
         core::future::pending::<()>().await;
     }
 }
+

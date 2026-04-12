@@ -12,17 +12,17 @@ use bh1750_embedded::Resolution;
 
 // TODO: dynamic recon of devices
 #[task]
-pub async fn bme280_task(i2c_bus: I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, sensor_channel: DynPublisher<'static, Measurements> ) {
+pub async fn bme280_task(i2c_bus: I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, sensor_channel: DynPublisher<'static, Measurements>, address: u8, ) {
     info!("Starting BME280 sensor task...");
-    let mut bme280 = crate::drivers::bme280::Bme280::new(i2c_bus, 0x76).await.unwrap();
+    let mut bme280 = crate::drivers::bme280::Bme280::new(i2c_bus, address).await.unwrap();
 
     loop {
-        debug!("Measuring BME280 sensor");
+        info!("Measuring BME280 sensor on {}", address);
         if let Ok(m) = bme280.measure().await {
-            debug!("Sending BME280 measurement trough sensors channel");
+            info!("Sending BME280 {} measurement trough sensors channel", address);
             sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;
         } else {
-            error!("Error measuring BME280 sensor");
+            info!("Error measuring BME280 sensor on {}", address);
         }
 
         Timer::after(Duration::from_secs(2)).await;
