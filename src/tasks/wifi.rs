@@ -1,12 +1,8 @@
-use alloc::borrow::ToOwned;
-use heapless::String;
 use defmt::{info, warn, debug};
-use esp_println::println;
 use esp_hal::rng::Rng;
 use esp_radio::wifi::{ModeConfig, WifiDevice, WifiMode};
 use esp_radio::wifi::ScanConfig;
 use esp_radio::wifi::ClientConfig;
-use esp_radio::wifi::WifiStaState;
 use esp_radio::wifi::WifiEvent;
 use esp_radio::wifi::WifiController;
 use embassy_net::{Runner, Stack};
@@ -14,7 +10,7 @@ use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_time::{Duration, Timer, WithTimeout};
 use embassy_sync::pubsub::{DynPublisher, DynSubscriber};
-use heapless::{format, Vec};
+use heapless::{Vec, String};
 use reqwless::client::{HttpClient, TlsConfig};
 use reqwless::request::RequestBuilder;
 use crate::events::{Measurements, SENSOR_CH_CAP};
@@ -121,7 +117,7 @@ async fn make_request(client: &mut HttpClient<'_, TcpClient<'_, 1, 4096, 4096>, 
     info!("[WIFI REQUEST] Making a request");
     let mut buffer = [0u8; 4096];
     let url: &str = "https://rickandmortyapi.com/api";
-    let mut http_request = client.request(
+    let http_request = client.request(
         reqwless::request::Method::POST,
         url
     ).await.unwrap();

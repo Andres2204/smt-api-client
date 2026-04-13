@@ -29,6 +29,7 @@ use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::pubsub::PubSubChannel;
 use smt_api_client::tasks::wifi::{telemetry_task, net_task, wifi_connection_task};
 use smt_api_client::events::{Measurements, SENSOR_CH};
+use smt_api_client::drivers::tca9548a::Tca9548a;
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
@@ -92,23 +93,26 @@ async fn main(spawner: Spawner) -> ! {
             I2cDevice::new(i2c_bus),
         )).ok();
 
+        let tca = Tca9548a::new(i2c_bus, 0x70);
+        let [_, _, ch2, ch3, ch4, _, _, _] = tca.split();
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_task_tca(
+            ch2,
+            SENSOR_CH.dyn_publisher().unwrap(),
+            0x76)).ok();
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_task_tca(
+            ch3,
+            SENSOR_CH.dyn_publisher().unwrap(),
+            0x76)).ok();
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_task_tca(
+            ch4,
+            SENSOR_CH.dyn_publisher().unwrap(),
+            0x76)).ok();
         /*
-        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(
-            I2cDevice::new(i2c_bus),
-            SENSOR_CH.dyn_publisher().unwrap(),
-            0x72)).ok();
-        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(
-            I2cDevice::new(i2c_bus),
-            SENSOR_CH.dyn_publisher().unwrap(),
-            0x73)).ok();
-        spawner.spawn(smt_api_client::tasks::sensors::bme280_task(
-            I2cDevice::new(i2c_bus),
-            SENSOR_CH.dyn_publisher().unwrap(),
-            0x74)).ok();
         spawner.spawn(smt_api_client::tasks::sensors::bh1750_task(
-            I2cDevice::new(i2c_bus),
+            I2cDevice::new(i2c_bus), // seguir usando el bus normal sin el multiplexor,
             SENSOR_CH.dyn_publisher().unwrap())).ok();
         */
+
     };
 
     #[allow(static_mut_refs)]

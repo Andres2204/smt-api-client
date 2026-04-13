@@ -1,4 +1,5 @@
 use embedded_hal_async::i2c::I2c;
+use defmt::Format;
 
 pub struct Bme280<I2C> {
     i2c: I2C,
@@ -6,7 +7,7 @@ pub struct Bme280<I2C> {
     calib: CalibrationData,
 }
 
-#[derive(Default, Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy, Format)]
 pub struct MeasurementsBME280 {
     pub temperature: f32,
     pub humidity: f32,
