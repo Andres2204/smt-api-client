@@ -56,8 +56,8 @@ extern crate alloc;
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
-pub const SSID: &str = "AQUI ESP32";
-pub const PASSWORD: &str = "andres123";
+pub const SSID: &str = "SOMOS MEDINA";
+pub const PASSWORD: &str = "1018224080";
 
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
@@ -94,6 +94,13 @@ async fn main(spawner: Spawner) -> ! {
         )).ok();
 
         let tca = Tca9548a::new(i2c_bus, 0x70);
+        spawner.spawn(smt_api_client::tasks::sensors::bme280_sequential_task(
+            tca,
+            SENSOR_CH.dyn_publisher().unwrap()
+        )).ok();
+
+        /*
+        let tca = Tca9548a::new(i2c_bus, 0x70);
         let [_, _, ch2, ch3, ch4, _, _, _] = tca.split();
         spawner.spawn(smt_api_client::tasks::sensors::bme280_task_tca(
             ch2,
@@ -107,7 +114,7 @@ async fn main(spawner: Spawner) -> ! {
             ch4,
             SENSOR_CH.dyn_publisher().unwrap(),
             0x76)).ok();
-        /*
+
         spawner.spawn(smt_api_client::tasks::sensors::bh1750_task(
             I2cDevice::new(i2c_bus), // seguir usando el bus normal sin el multiplexor,
             SENSOR_CH.dyn_publisher().unwrap())).ok();
@@ -179,8 +186,11 @@ async fn main(spawner: Spawner) -> ! {
     #[cfg(feature = "http-api")]
     spawner.spawn(smt_api_client::tasks::wifi::http_api_task(_stack, dtec.dyn_subscriber().unwrap())).ok();
 
-    // #[cfg(not(feature = "mqtt"))]
-    // spawner.spawn().ok();
+    #[cfg(feature = "mqtt")]
+    {
+       //spawner.spawn(smt_api_client::tasks::mqtt::run_mqtt(_stack)).ok();
+    }
+
 
     loop {
         //info!("Memory stats: {}", esp_alloc::HEAP.stats());
@@ -188,4 +198,3 @@ async fn main(spawner: Spawner) -> ! {
         core::future::pending::<()>().await;
     }
 }
-

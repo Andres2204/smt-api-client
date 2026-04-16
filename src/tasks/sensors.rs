@@ -9,11 +9,51 @@ use embassy_sync::pubsub::DynPublisher;
 use crate::events::Measurements;
 use bh1750_embedded::r#async::Bh1750Async;
 use bh1750_embedded::Resolution;
-use embedded_hal_async::i2c::ErrorType;
-use crate::drivers::bme280::MeasurementsBME280;
-use crate::drivers::tca9548a::TcaChannel;
+use crate::drivers::tca9548a::{Tca9548a, TcaChannel};
 
 // TODO: dynamic recon of devices
+
+#[task]
+pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_channel: DynPublisher<'static, Measurements>) {
+    let [_, _, ch2, ch3, ch4, _, _, _] = tca.split();
+
+    let address = 0x76;
+    let mut bme1 = crate::drivers::bme280::Bme280::new(ch2, address).await.unwrap();
+    let mut bme2 = crate::drivers::bme280::Bme280::new(ch3, address).await.unwrap();
+    let mut bme3 = crate::drivers::bme280::Bme280::new(ch4, address).await.unwrap();
+
+    loop {
+        match bme1.measure().await {
+            Ok(m) => {
+                info!("Sending BME280:2 measurementes {}", &m);
+                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+            Err(_e) => {
+                error!("Error measuring BME280:3 sensor on {}", address);
+            }
+        }
+
+        match bme2.measure().await {
+            Ok(m) => {
+                info!("Sending BME280:3 measurementes {}", &m);
+                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+            Err(_e) => {
+                error!("Error measuring BME280:3 sensor on {}", address);
+            }
+        }
+
+        match bme3.measure().await {
+            Ok(m) => {
+                info!("Sending BME280:4 measurementes {}", &m);
+                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+            Err(_e) => {
+                error!("Error measuring BME280:4 sensor on {}", address);
+            }
+        }
+
+        Timer::after(Duration::from_secs(2)).await;
+    }
+}
+
 #[task]
 pub async fn bme280_task(i2c_bus: I2cDevice<'static, NoopRawMutex, I2c<'static, Async>>, sensor_channel: DynPublisher<'static, Measurements>, address: u8 ) {
     bme280(i2c_bus, sensor_channel, address, None).await;
@@ -38,7 +78,7 @@ where I2C: embedded_hal_async::i2c::I2c
 
     loop {
         if let Some(c) = channel {
-            info!("Measuring BME280 sensor from channel {}", channel);
+            info!("Measuring BME280 sensor from channel {}", c);
         } else {
             info!("Measuring BME280 sensor on default");
         }
@@ -47,8 +87,8 @@ where I2C: embedded_hal_async::i2c::I2c
             Ok(m) => {
                 info!("Sending BME280:{} measurementes {}", channel, &m);
                 sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
-            Err(e) => {
-                error!("Error measuring BME280:{} sensor on {}", channel, address);
+            Err(_) => {
+                error!("Error measuring BME280:{} sensor on", channel);
             }
         }
 
