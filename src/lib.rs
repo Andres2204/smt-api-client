@@ -5,7 +5,6 @@ pub mod tasks;
 pub mod events;
 pub mod drivers;
 
-
 pub mod i2c_scanner {
     use defmt::{info, warn};
     use embassy_embedded_hal::shared_bus::asynch::i2c::I2cDevice;

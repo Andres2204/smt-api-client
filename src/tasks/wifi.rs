@@ -1,18 +1,18 @@
 use defmt::{info, warn, debug};
-use esp_hal::rng::Rng;
+//use esp_hal::rng::Rng;
 use esp_radio::wifi::{ModeConfig, WifiDevice, WifiMode};
 use esp_radio::wifi::ScanConfig;
 use esp_radio::wifi::ClientConfig;
 use esp_radio::wifi::WifiEvent;
 use esp_radio::wifi::WifiController;
-use embassy_net::{Runner, Stack};
-use embassy_net::dns::DnsSocket;
+use embassy_net::{Runner, /*Stack*/};
+//use embassy_net::dns::DnsSocket;
 use embassy_net::tcp::client::{TcpClient, TcpClientState};
 use embassy_time::{Duration, Timer, WithTimeout};
 use embassy_sync::pubsub::{DynPublisher, DynSubscriber};
 use heapless::{Vec, String};
-use reqwless::client::{HttpClient, TlsConfig};
-use reqwless::request::RequestBuilder;
+//use reqwless::client::{HttpClient, TlsConfig};
+//use reqwless::request::RequestBuilder;
 use crate::events::{Measurements, SENSOR_CH_CAP};
 
 #[embassy_executor::task]
@@ -77,6 +77,7 @@ pub async fn wifi_connection_task(mut wifi: WifiController<'static>, ssid: &'sta
 
 }
 
+/*
 #[embassy_executor::task]
 pub async fn http_api_task(stack: Stack<'static>, mut connection_channel: DynSubscriber<'static, Measurements>) {
     let seed = Rng::new().random() as u64;
@@ -135,6 +136,7 @@ async fn make_request(client: &mut HttpClient<'_, TcpClient<'_, 1, 4096, 4096>, 
 
     Timer::after(Duration::from_secs(1)).await;
 }
+*/
 
 #[embassy_executor::task]
 pub async fn telemetry_task(mut sensors_channel: DynSubscriber<'static, Measurements>, connection_channel: DynPublisher<'static, Measurements>) {

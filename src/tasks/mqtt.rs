@@ -1,102 +1,137 @@
-/*
-use defmt::{info, error};
+#![allow(unused)]   // quita warnings molestos mientras desarrollas
+
+extern crate alloc; // Necesario para alloc::format
+
+use core::num::NonZero;
+use core::net::SocketAddrV4;
+use defmt::{info, error, warn};
 use embassy_executor::task;
 use embassy_net::Stack;
-use embassy_net::tcp::TcpSocket;
-use rust_mqtt::client::{
-    Client,
-    options::{ConnectOptions, SubscriptionOptions, PublicationOptions, DisconnectOptions},
-    event::Event,
-};
-use rust_mqtt::config::{SessionExpiryInterval};
-use rust_mqtt::types::{MqttBinary, MqttString, TopicName};
-use rust_mqtt::session::CPublishFlightState;
-use rust_mqtt::buffer::AllocBuffer;
+use embassy_net::tcp::TcpSocket as NetTcpSocket;
+use embassy_time::{Duration, Timer};
 
+use rust_mqtt::client::{Client, options::{ConnectOptions, PublicationOptions, SubscriptionOptions}};
+use rust_mqtt::types::{MqttString, TopicName};
+use rust_mqtt::buffer::AllocBuffer;
+use rust_mqtt::client::event::Event;
+use rust_mqtt::client::options::TopicReference;
+use rust_mqtt::config::KeepAlive;
+
+const BROKER_IP: &str = "192.168.58.176";
+const BROKER_PORT: u16 = 1883;
 
 #[task]
-async fn run_mqtt(stack: Stack<'static>) {
-    use embedded_io_async::{Read, Write};
+pub async fn mqtt_task(stack: Stack<'static>) {
 
-    info!("Starting MQTT task");
-    let mut buffer = AllocBuffer;
-    let mut client = Client::new(&mut buffer);
+    stack.wait_config_up().await;
 
-    static mut RX_BUFFER: [u8; 4096] = [0; 4096];
-    static mut TX_BUFFER: [u8; 4096] = [0; 4096];
-
-    let socket = TcpSocket::new(
-        stack,
-        &mut RX_BUFFER,
-        &mut TX_BUFFER,
-    );
-
-    let remote = "192.168.58.176:1883"; // tu endpoint
-    if let Err(e) = socket.connect(remote).await {
-        error!("Failed to connect: {:?}", e);
-        return;
+    if let Some(config) = stack.config_v4() {
+        info!("[MQTT] My IP: {}, MAC: {}, Gateway: {:?}",
+              config.address, stack.hardware_address(), config.gateway);
     }
 
-    let transport = socket;
+    let mut rx_buffer = [0u8; 4096];
+    let mut tx_buffer = [0u8; 4096];
 
-    let connect_options = ConnectOptions::new()
-        .clean_start()
-        .session_expiry_interval(SessionExpiryInterval::NeverEnd)
-        .user_name(MqttString::from_str("user").unwrap())
-        .password(MqttBinary::from_slice(b"pass").unwrap());
+    loop {
+        info!("[MQTT] Intentando conectar a {}:{}", BROKER_IP, BROKER_PORT);
 
-    client.connect(
-        transport,
-        &connect_options,
-        Some(MqttString::from_str("Hydroponic").unwrap()),
-    ).await.unwrap();
+        let mut socket = NetTcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
 
-    let topic = TopicName::new(MqttString::from_str("demo/topic").unwrap()).unwrap();
+        let broker_addr: SocketAddrV4 = alloc::format!("{}:{}", BROKER_IP, BROKER_PORT)
+            .parse()
+            .expect("Dirección inválida");
 
-    client.subscribe(
-        topic.as_borrowed().into(),
-        SubscriptionOptions::new().exactly_once(),
-    ).await.unwrap();
-
-    let packet_identifier = client.publish(
-        &PublicationOptions::new(topic.as_borrowed().into()).exactly_once(),
-        "Hello World!".into(),
-    ).await.unwrap().unwrap();
-
-    while let Ok(event) = client.poll().await {
-        if let Event::PublishComplete(_) = event {
-            // Publish succeeded, we can disconnect
-            client.disconnect(&DisconnectOptions::new()).await.unwrap();
-            return;
+        if let Err(e) = socket.connect(broker_addr).await {
+            error!("[MQTT] TCP connect falló: {:?}", e);
+            Timer::after(Duration::from_secs(5)).await;
+            continue;
         }
-    }
 
-    // An error has occured (e.g. network failure)
-    client.abort().await;
+        info!("[MQTT] TCP conectado");
 
-    let transport = socket;    // Open a fresh connection
+        // Cliente MQTT
+        let mut buffer_provider = AllocBuffer;
+        let mut client: Client<'_, &mut NetTcpSocket, _, 4, 4, 4, 4> = Client::new(&mut buffer_provider);
 
-    client.connect(
-        transport,
-        &connect_options,
-        Some(MqttString::from_str("rust-mqtt-demo").unwrap()),
-    ).await.unwrap();
+        // Opciones de conexión
+        let connect_options = ConnectOptions::new()
+            .clean_start()          // ← sin argumento (true por defecto)
+            .keep_alive(KeepAlive::Seconds(NonZero::new(60).unwrap()));     // ← toma u16, no KeepAlive wrapper
 
+        // Conexión MQTT (Client ID se pasa aquí)
+        if let Err(e) = client.connect(
+            &mut socket,
+            &connect_options,
+            Some(MqttString::from_str("esp32-smt-client").unwrap()),
+        ).await {
+            error!("[MQTT] MQTT CONNECT falló: {:?}", e);
+            Timer::after(Duration::from_secs(5)).await;
+            continue;
+        }
 
-    // Recover the in-flight Quality of Service 2 publish.
+        info!("[MQTT] ¡Conectado a MQTT correctamente!");
 
-    match client.session().cpublish_flight_state(packet_identifier) {
-        // - Republish if PUBLISH / PUBREC may have been lost
-        Some(CPublishFlightState::AwaitingPubrec) => client.republish(
-            packet_identifier,
-            &PublicationOptions::new(topic.into()).exactly_once(),
-            "Hello World!".into(),
-        ).await.unwrap(),
-        // - Re-release if PUBREL / PUBCOMP may have been lost
-        Some(CPublishFlightState::AwaitingPubcomp) => client.rerelease().await.unwrap(),
-        // - Flight state already completed
-        _ => {}
+        // Suscribirse
+        let topic_str = MqttString::from_str("test/topic").unwrap();
+        let topic_name = TopicName::new(topic_str).unwrap();
+
+        if let Err(e) = client.subscribe(
+            topic_name.as_borrowed().into(),   // TopicFilter
+            SubscriptionOptions::new().at_least_once(),
+        ).await {
+            error!("[MQTT] Subscribe falló: {:?}", e);
+        } else {
+            info!("[MQTT] Suscrito a test/topic");
+        }
+
+        // Loop principal
+        let mut counter: u32 = 0;
+
+        loop {
+            // Poll (mantener conexión viva y recibir mensajes)
+            let poll = client.poll().await;
+            if let Ok(event) = poll {
+                match &event {
+                    Event::Publish(publication) => {
+                        let topic = &publication.topic;
+                        let message = publication.message.as_bytes();
+                        let msg_str = str::from_utf8(message).unwrap();
+
+                        info!("[MQTT SUB] from {}: {}", topic, msg_str);
+                    }
+                    _ => {
+                        info!("[MQTT] received event {}", event);
+                    }
+                }
+            } else{
+                error!("[MQTT] Poll error: {:?}", poll);
+                break;
+            }
+
+            // Publicar cada ~10 segundos
+            let payload = alloc::format!("Hola desde ESP32 #{}", counter);
+
+            let topic_reference = TopicReference::Name(topic_name.clone());
+            let pub_options = PublicationOptions::new(
+               topic_reference   // TopicReference
+            );
+
+            if let Err(e) = client.publish(
+                &pub_options,
+                rust_mqtt::Bytes::Borrowed(payload.as_bytes()),
+            ).await {
+                error!("[MQTT] Publish falló: {:?}", e);
+                break;
+            } else {
+                info!("[MQTT] Publicado: {}", payload.as_str());  // defmt prefiere &str
+            }
+
+            counter += 1;
+            Timer::after(Duration::from_secs(2)).await;
+        }
+
+        warn!("[MQTT] Conexión perdida. Reintentando en 5s...");
+        Timer::after(Duration::from_secs(5)).await;
     }
 }
-
-*/

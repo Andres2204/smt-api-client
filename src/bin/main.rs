@@ -56,9 +56,10 @@ extern crate alloc;
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
-pub const SSID: &str = "SOMOS MEDINA";
-pub const PASSWORD: &str = "1018224080";
+pub const SSID: &str = "AQUI ESP32";
+pub const PASSWORD: &str = "andres123";
 
+use core::fmt::Write;
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     // generator version: 1.1.0
@@ -88,16 +89,22 @@ async fn main(spawner: Spawner) -> ! {
         let i2c = I2c::new(i2c0, Config::default()).unwrap().with_scl(scl).with_sda(sda).into_async();
         let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
 
-        // i2c scanner
-        spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(
-            I2cDevice::new(i2c_bus),
-        )).ok();
 
-        let tca = Tca9548a::new(i2c_bus, 0x70);
-        spawner.spawn(smt_api_client::tasks::sensors::bme280_sequential_task(
-            tca,
-            SENSOR_CH.dyn_publisher().unwrap()
-        )).ok();
+
+        #[cfg(feature = "sensors")]
+        {
+            // i2c scanner
+            spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(
+                I2cDevice::new(i2c_bus),
+            )).ok();
+
+            let tca = Tca9548a::new(i2c_bus, 0x70);
+            spawner.spawn(smt_api_client::tasks::sensors::bme280_sequential_task(
+                tca,
+                SENSOR_CH.dyn_publisher().unwrap()
+            )).ok();
+        }
+
 
         /*
         let tca = Tca9548a::new(i2c_bus, 0x70);
@@ -181,15 +188,15 @@ async fn main(spawner: Spawner) -> ! {
         spawner.spawn(wifi_connection_task(wifi_controller, SSID, PASSWORD)).ok();
         spawner.spawn(telemetry_task(SENSOR_CH.dyn_subscriber().unwrap(), dtec.dyn_publisher().unwrap())).ok();
 
+        #[cfg(feature = "http-api")]
+        spawner.spawn(smt_api_client::tasks::wifi::http_api_task(_stack, dtec.dyn_subscriber().unwrap())).ok();
+
+        #[cfg(feature = "mqtt")]
+        spawner.spawn(smt_api_client::tasks::mqtt::mqtt_task(_stack)).ok();
     }
 
-    #[cfg(feature = "http-api")]
-    spawner.spawn(smt_api_client::tasks::wifi::http_api_task(_stack, dtec.dyn_subscriber().unwrap())).ok();
 
-    #[cfg(feature = "mqtt")]
-    {
-       //spawner.spawn(smt_api_client::tasks::mqtt::run_mqtt(_stack)).ok();
-    }
+
 
 
     loop {
