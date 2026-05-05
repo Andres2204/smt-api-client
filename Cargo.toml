@@ -22,61 +22,41 @@ path = "src/bin/main.rs"
 defmt = "1.0.1"
 static_cell = "2.1.1"
 esp-println = { version = "0.16.1", features = ["defmt-espflash", "esp32"] }
-esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32"] }
-esp-alloc = { version = "0.9.0", features = ["defmt"] }
+esp-bootloader-esp-idf = { version = "0.5.0", features = ["defmt", "esp32"] }
+esp-alloc = { version = "0.10.0", features = ["defmt", ] }
 
-esp-hal = { version = "1.0.0", features = ["defmt", "esp32", "unstable"] }
-esp-rtos = { version = "0.2.0", features = [
+esp-hal = { version = "1.1.0-rc.0", features = ["defmt", "esp32", "unstable"] }
+esp-rtos = { version = "0.3.0", features = [
   "defmt",
   "embassy",
   "esp-alloc",
   "esp-radio",
   "esp32",
 ] }
-esp-radio = { version = "0.17.0", features = [
+esp-radio = { version = "0.18.0", default-features = false, features = [
   "defmt",
-  "esp-alloc",
   "esp32",
-  "smoltcp",
   "unstable",
   "wifi",
+  "print-logs-from-driver"
 ] }
 
 embedded-hal-async = "1.0.0"
 embedded-io-async = "0.7.0"
 
-# for more networking protocol support see https://crates.io/crates/edge-net
-embassy-executor = { version = "0.9.1", features = ["defmt", "executor-thread"] }
+embassy-executor = { version = "0.10", features = ["defmt", "executor-thread"] }
 embassy-sync = { version = "0.8", features = ["defmt"] }   # ≈0.6 para compatibilidad con embassy 0.9+
 embassy-time = { version = "0.5.1", features = ["defmt"] }
 embassy-embedded-hal = "0.6.0"
-embassy-net = { version = "0.8.0", features = [
+embassy-net = { version = "0.9.1", features = [
   "defmt",
   "dhcpv4",
   "medium-ethernet",
   "tcp",
   "udp",
-  #addition:
   "dns",
 ] }
 
-smoltcp = { version = "0.12.0", default-features = false, features = [
-  "defmt",
-  "medium-ethernet",
-  "multicast",
-  "proto-dhcpv4",
-  "proto-dns",
-  "proto-ipv4",
-  "socket-dns",
-  "socket-icmp",
-  "socket-raw",
-  "socket-tcp",
-  "socket-udp",
-  # addition:
-  "dns-max-server-count-4",
-] }
-critical-section = "1.2.0"
-#reqwless = { version = "0.13.0", default-features = false, features = ["embedded-tls", "defmt"]}
 heapless = "0.9.2"
 rust-mqtt = { version = "0.5", features = ["defmt"]}
 

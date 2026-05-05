@@ -3,10 +3,13 @@ runner = "espflash flash --monitor --chip esp32 --log-format defmt"
 
 [env]
 DEFMT_LOG="info"
+SSID="SSID"
+PASSWORD="PASSWORD"
 
 [build]
 rustflags = [
   "-C", "link-arg=-nostartfiles",
+  "-Z", "macro-backtrace"
 ]
 
 target = "xtensa-esp32-none-elf"

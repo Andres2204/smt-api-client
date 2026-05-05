@@ -1,39 +1,37 @@
 use defmt::{info, warn, debug};
-//use esp_hal::rng::Rng;
-use esp_radio::wifi::{ModeConfig, WifiDevice, WifiMode};
-use esp_radio::wifi::ScanConfig;
-use esp_radio::wifi::ClientConfig;
-use esp_radio::wifi::WifiEvent;
+use esp_radio::wifi::{Config, Interface};
+use esp_radio::wifi::sta::StationConfig;
+use esp_radio::wifi::scan::ScanConfig;
 use esp_radio::wifi::WifiController;
 use embassy_net::{Runner, /*Stack*/};
-//use embassy_net::dns::DnsSocket;
-use embassy_net::tcp::client::{TcpClient, TcpClientState};
-use embassy_time::{Duration, Timer, WithTimeout};
+use embassy_time::{Duration, Timer};
 use embassy_sync::pubsub::{DynPublisher, DynSubscriber};
-use heapless::{Vec, String};
-//use reqwless::client::{HttpClient, TlsConfig};
-//use reqwless::request::RequestBuilder;
+use heapless::{Vec};
 use crate::events::{Measurements, SENSOR_CH_CAP};
 
 #[embassy_executor::task]
-pub async fn net_task(mut runner: Runner<'static, WifiDevice<'static>>) {
+pub async fn net_task(mut runner: Runner<'static, Interface<'static>>) {
     info!("Starting network stack");
     runner.run().await
 }
 
 #[embassy_executor::task]
 pub async fn wifi_connection_task(mut wifi: WifiController<'static>, ssid: &'static str, password: &'static str) -> ! {
-    wifi.set_mode(WifiMode::Sta).unwrap();
-    wifi.start_async().with_timeout(Duration::from_secs(3)).await.unwrap().unwrap();
+    let sta_config = Config::Station(StationConfig::default()
+        .with_ssid(ssid)
+        .with_password(password.into())
+    );
+    let scan_config = ScanConfig::default().with_max(10);
+    wifi.set_config(&sta_config).unwrap();
     Timer::after(Duration::from_secs(2)).await;
 
     loop {
         info!("[WIFI] Connecting to wifi...");
         info!("[WIFI] Scanning for Wifi Networks");
         // todo: channel send state
-        let networks = wifi.scan_with_config_async(ScanConfig::default()).await.unwrap();
-        for n in networks {
-            info!("wifi network: {} @ {}db", n.ssid.as_str(), n.signal_strength);
+        let networks = wifi.scan_async(&scan_config).await.unwrap();
+        for ap in networks {
+            info!("wifi network: {} @ {}db", ap.ssid.as_str(), ap.signal_strength);
             /*
             if let Some(cfg) = config_for_network(&n.ssid) {
                 wifi.set_config(&esp_radio::wifi::ModeConfig::Client(cfg)).unwrap();
@@ -46,35 +44,28 @@ pub async fn wifi_connection_task(mut wifi: WifiController<'static>, ssid: &'sta
         }
 
         // TODO. actualizar para soportar diferentes redes (como esta comentado arriba)
-        let client_config = ModeConfig::Client(ClientConfig::default()
-            .with_ssid(ssid.into())
-            .with_password(password.into())
-        );
-        wifi.set_config(&client_config).unwrap();
-
+        wifi.set_config(&sta_config).unwrap();
         if wifi.connect_async().await.is_err() {
             warn!("Unable to connect to wifi {}", ssid);
         }
 
-        match wifi.is_connected() {
-            Ok(true) => {
-                info!("[WIFI] Wifi is online!");
-                // todo: channel send wifi::connected | up | etc
-                wifi.wait_for_event(WifiEvent::StaDisconnected).await;
-                warn!("[WIFI] Wifi disconnected");
-            },
-            Ok(false) => {
-                warn!("[WIFI] Wifi offline");
-                // todo: channel send wifi::Offline
-                Timer::after(Duration::from_secs(5)).await;
-            },
-            Err(e) => {
-                warn!("[WIFI] An error occurred: {}", e);
-                Timer::after(Duration::from_secs(5)).await;
+        if wifi.is_connected() {
+            info!("[WIFI] Wifi is online!");
+            // todo: channel send wifi::connected | up | etc
+            match wifi.wait_for_disconnect_async().await {
+                Ok(info) => {
+                    warn!("[Wifi] Wifi disconnected! {}", info.reason);
+                },
+                Err(e) => {
+                    warn!("[WIFI] Error in disconnection to wifi: {}", e);
+                }
             }
+        } else {
+            warn!("[WIFI] Wifi offline");
+            // todo: channel send wifi::Offline or use stack
+            Timer::after(Duration::from_secs(5)).await;
         }
     }
-
 }
 
 /*
