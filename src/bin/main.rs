@@ -10,7 +10,7 @@
 use defmt::{debug, info};
 use esp_hal::clock::CpuClock;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
-use esp_hal::rng::Rng;
+use esp_hal::rng::{ Trng, TrngSource};
 use esp_hal::timer::timg::TimerGroup;
 use esp_hal::{Async, i2c::master::{Config, I2c}, };
 use esp_println::{self as _, println};
@@ -67,7 +67,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 async fn main(spawner: embassy_executor::Spawner) -> ! {
     // generator version: 1.1.0
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
-    let peripherals = esp_hal::init(config);
+    let mut peripherals = esp_hal::init(config);
     //esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 120000);
     esp_alloc::heap_allocator!(size: 98768);
 
@@ -87,7 +87,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let scl = peripherals.GPIO22;
 
     let _software_interrupt = sw_int.software_interrupt2;
-    let cpu1_main = move |spawner: embassy_executor::Spawner| {
+    let cpu1_main = move |_spawner: embassy_executor::Spawner| {
         debug!("Launching i2c sensor tasks");
         static I2C_BUS: StaticCell<Mutex<NoopRawMutex, I2c<'static, Async>>> = StaticCell::new();
         let i2c = I2c::new(i2c0, Config::default())
@@ -95,15 +95,15 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             .with_scl(scl)
             .with_sda(sda)
             .into_async();
-        let i2c_bus = I2C_BUS.init(Mutex::new(i2c));
+        let _i2c_bus = I2C_BUS.init(Mutex::new(i2c));
 
         #[cfg(feature = "sensors")]
         {
             // i2c scanner
-            spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(I2cDevice::new(i2c_bus)));
+            _spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(I2cDevice::new(_i2c_bus)));
 
-            let tca = Tca9548a::new(i2c_bus, 0x70);
-            spawner.spawn(smt_api_client::tasks::sensors::bme280_sequential_task(
+            let tca = Tca9548a::new(_i2c_bus, 0x70);
+            _spawner.spawn(smt_api_client::tasks::sensors::bme280_sequential_task(
                 tca,
                 SENSOR_CH.dyn_publisher().unwrap(),
             ));
@@ -173,8 +173,13 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         // init network _stack (with dhcp)
         static STACK_RESOURCES: StaticCell<StackResources<5>> = StaticCell::new();
         let stack_resources = STACK_RESOURCES.init_with(|| StackResources::<5>::new());
-        let rng = Rng::new();
-        let net_seed = rng.random() as u64 | ((rng.random() as u64) << 32);
+
+        let mut trng_buf = [0u8; 16];
+        let _trng_source = TrngSource::new(peripherals.RNG, peripherals.ADC1.reborrow());
+        let trng = Trng::try_new().unwrap();
+        trng.read(&mut trng_buf);
+
+        let net_seed = trng.random() as u64 | ((trng.random() as u64) << 32);
         let config = embassy_net::Config::dhcpv4(DhcpConfig::default());
         let (_stack, runner) = embassy_net::new(
             wifi_interface,
@@ -214,7 +219,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         ));
 
         #[cfg(feature = "mqtt")]
-        spawner.spawn(smt_api_client::tasks::mqtt::mqtt_task(_stack).expect("error in mqtt"));
+        spawner.spawn(smt_api_client::tasks::mqtt::mqtt_task(_stack, trng.clone()).expect("error in mqtt"));
     }
 
     loop {

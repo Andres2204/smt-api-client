@@ -10,18 +10,21 @@ use embassy_net::Stack;
 use embassy_net::tcp::TcpSocket as NetTcpSocket;
 use embassy_time::{Duration, Timer};
 
+use embedded_tls::{TlsConfig, TlsConnection, TlsContext, UnsecureProvider};
+use embedded_tls::Aes128GcmSha256;
+
 use rust_mqtt::client::{Client, options::{ConnectOptions, PublicationOptions, SubscriptionOptions}};
-use rust_mqtt::types::{MqttString, TopicName};
+use rust_mqtt::types::{MqttBinary, MqttString, TopicName};
 use rust_mqtt::buffer::AllocBuffer;
 use rust_mqtt::client::event::Event;
 use rust_mqtt::client::options::TopicReference;
 use rust_mqtt::config::KeepAlive;
 
-const BROKER_IP: &str = "192.168.58.176";
-const BROKER_PORT: u16 = 1883;
+const BROKER_IP: &str = "35.172.255.228"; // broker.emqx.io TODO: impl dns if using domain name
+const BROKER_PORT: u16 = 8883;
 
 #[task]
-pub async fn mqtt_task(stack: Stack<'static>) {
+pub async fn mqtt_task(stack: Stack<'static>, mut rng: esp_hal::rng::Trng) {
 
     stack.wait_config_up().await;
 
@@ -33,11 +36,13 @@ pub async fn mqtt_task(stack: Stack<'static>) {
     let mut rx_buffer = [0u8; 4096];
     let mut tx_buffer = [0u8; 4096];
 
+    let mut tls_rx = [0u8; 16640];
+    let mut tls_tx = [0u8; 16640];
+
     loop {
         info!("[MQTT] Intentando conectar a {}:{}", BROKER_IP, BROKER_PORT);
 
         let mut socket = NetTcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
-
         let broker_addr: SocketAddrV4 = alloc::format!("{}:{}", BROKER_IP, BROKER_PORT)
             .parse()
             .expect("Dirección inválida");
@@ -50,20 +55,33 @@ pub async fn mqtt_task(stack: Stack<'static>) {
 
         info!("[MQTT] TCP conectado");
 
+        // TLS
+        let tls_config: TlsConfig<> = TlsConfig::new()
+            .with_server_name(BROKER_IP)
+            .enable_rsa_signatures();
+        let mut tls_context = TlsContext::new(&tls_config, UnsecureProvider::new::<Aes128GcmSha256>(rng.clone()));
+        let mut tls = TlsConnection::new(socket, &mut tls_rx, &mut tls_tx);
+        match tls.open(tls_context).await {
+            Ok(_) => { info!("[MQTT] TLS Connected"); },
+            Err(e) => { error!("[MQTT] TLS Error: {:?}", e); }
+        }
+
         // Cliente MQTT
         let mut buffer_provider = AllocBuffer;
-        let mut client: Client<'_, &mut NetTcpSocket, _, 4, 4, 4, 4> = Client::new(&mut buffer_provider);
+        let mut client: Client<'_, &mut TlsConnection<NetTcpSocket, _>, _, 4, 4, 4, 4> = Client::new(&mut buffer_provider);
 
         // Opciones de conexión
         let connect_options = ConnectOptions::new()
             .clean_start()          // ← sin argumento (true por defecto)
-            .keep_alive(KeepAlive::Seconds(NonZero::new(60).unwrap()));     // ← toma u16, no KeepAlive wrapper
+            .keep_alive(KeepAlive::Seconds(NonZero::new(60).unwrap()))     // ← toma u16, no KeepAlive wrapper
+            .user_name(MqttString::from_str("esp32-smartpot").unwrap())
+            .password(MqttBinary::from_slice(b"password").unwrap());
 
         // Conexión MQTT (Client ID se pasa aquí)
         if let Err(e) = client.connect(
-            &mut socket,
+            &mut tls,
             &connect_options,
-            Some(MqttString::from_str("esp32-smt-client").unwrap()),
+            Some(MqttString::from_str("esp32-smartpot-v1").unwrap()),
         ).await {
             error!("[MQTT] MQTT CONNECT falló: {:?}", e);
             Timer::after(Duration::from_secs(5)).await;
@@ -132,6 +150,7 @@ pub async fn mqtt_task(stack: Stack<'static>) {
         }
 
         warn!("[MQTT] Conexión perdida. Reintentando en 5s...");
+        client.abort().await;
         Timer::after(Duration::from_secs(5)).await;
     }
 }
