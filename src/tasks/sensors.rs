@@ -51,7 +51,7 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
             }
         }
 
-        Timer::after(Duration::from_secs(10)).await;
+        Timer::after(Duration::from_secs(20)).await;
     }
 }
 
