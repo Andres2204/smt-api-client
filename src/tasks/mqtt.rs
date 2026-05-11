@@ -3,21 +3,23 @@ extern crate alloc; // Necesario para alloc::format
 use core::num::NonZero;
 use core::net::SocketAddrV4;
 use defmt::{info, error, warn};
+
 use embassy_executor::task;
 use embassy_net::Stack;
 use embassy_net::tcp::TcpSocket as NetTcpSocket;
 use embassy_sync::pubsub::{DynPublisher, DynSubscriber};
 use embassy_time::{Duration, Timer};
+use embassy_futures::select::{select, Either};
 
 use embedded_tls::{TlsConfig, TlsConnection, TlsContext, UnsecureProvider};
 use embedded_tls::Aes128GcmSha256;
-use heapless::{String, Vec};
 use rust_mqtt::client::{Client, options::{ConnectOptions, PublicationOptions, SubscriptionOptions}};
 use rust_mqtt::types::{MqttBinary, MqttString, TopicName};
 use rust_mqtt::buffer::AllocBuffer;
 use rust_mqtt::client::event::Event;
 use rust_mqtt::client::options::TopicReference;
 use rust_mqtt::config::KeepAlive;
+use heapless::{String, Vec};
 use crate::events::{Actuators, Command, Measurements, SENSOR_CH_CAP};
 
 // BROKER
@@ -26,6 +28,8 @@ const BROKER_PORT: u16 = 8883;
 
 // MQTT TOPICS
 const TOPIC_PREFIX: &str = "smartpot/v1/";
+
+// TODO: separate task responsabilities
 
 #[task]
 pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut sensor_channel: DynSubscriber<'static, Measurements>, commands_channel: DynPublisher<'static, Command>) {
@@ -42,19 +46,19 @@ pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut senso
             info!("[MQTT] My IP: {}, MAC: {}, Gateway: {:?}", config.address, stack.hardware_address(), config.gateway);
         }
 
-        info!("[MQTT] Intentando conectar a {}:{}", BROKER_IP, BROKER_PORT);
+        info!("[MQTT] Trying to connect to {}:{}", BROKER_IP, BROKER_PORT);
 
         let mut socket = NetTcpSocket::new(stack, &mut rx_buffer, &mut tx_buffer);
         let broker_addr: SocketAddrV4 = alloc::format!("{}:{}", BROKER_IP, BROKER_PORT)
             .parse()
-            .expect("Dirección inválida");
+            .expect("Invalid Socket");
 
         if let Err(e) = socket.connect(broker_addr).await {
-            error!("[MQTT] TCP connect falló: {:?}", e);
+            error!("[MQTT] TCP connect failed: {:?}", e);
             Timer::after(Duration::from_secs(5)).await;
             continue;
         }
-        info!("[MQTT] TCP conectado");
+        info!("[MQTT] TCP Connected");
 
         // TLS
         let tls_config: TlsConfig<> = TlsConfig::new()
@@ -90,7 +94,7 @@ pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut senso
 
         info!("[MQTT] MQTT connected successfully!");
 
-        // Suscribirse
+        //  create topics
         let topic_base = alloc::format!(
             "{}{}/",
             TOPIC_PREFIX,
@@ -101,6 +105,9 @@ pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut senso
             MqttString::from_str(&bind).unwrap()
         ).unwrap();
 
+        let topic_sensors_base = alloc::format!("{}sensors", topic_base);
+
+        // Subscribe to commands
         if let Err(e) = client.subscribe(
             topic_commands.as_borrowed().into(),   // TopicFilter
             SubscriptionOptions::new().at_least_once(),
@@ -111,62 +118,67 @@ pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut senso
         }
 
         loop {
-            // Poll (mantener conexión viva y recibir mensajes)
-            let poll = client.poll().await;
-            if let Ok(event) = poll {
-                match &event {
-                    Event::Publish(publication) => {
-                        let topic = &publication.topic;
-                        let message = publication.message.as_bytes();
-                        let msg_str = str::from_utf8(message).unwrap();
+            // Poll (keep connection alive and receive messages from topics)
+            match select(client.poll(), Timer::after(Duration::from_secs(5))).await {
+                Either::First(poll) => {
+                    if let Ok(event) = poll {
+                        match &event {
+                            Event::Publish(publication) => {
+                                let topic = &publication.topic;
+                                let message = publication.message.as_bytes();
+                                let msg_str = str::from_utf8(message).unwrap();
 
-                        info!("[MQTT SUB] from {}: {}", topic, msg_str);
-                        commands_channel.publish_immediate(Command::Activate(Actuators::Humidifier));
-                        // send commands trough command_channel (publish_inmediate())
+                                info!("[MQTT SUB] from {}: {}", topic, msg_str);
+                                commands_channel.publish_immediate(Command::Activate(Actuators::Humidifier));
+                                // send commands trough command_channel (publish_inmediate())
+                            }
+                            _ => {
+                                info!("[MQTT] received event {}", event);
+                            }
+                        }
+                    } else{
+                        error!("[MQTT] Poll error: {:?}", poll);
+                        break;
                     }
-                    _ => {
-                        info!("[MQTT] received event {}", event);
+                },
+                Either::Second(_) => {
+                    // TODO: This code is copied from telemetry task in wifi.rs
+                    // TODO: wrap in a feature
+                    let mut measures: Vec<Measurements, SENSOR_CH_CAP> = Vec::new();
+                    for _ in 0..SENSOR_CH_CAP {
+                        match sensor_channel.try_next_message_pure() {
+                            Some(m) => measures.push(m).unwrap(),
+                            None => { break; }
+                        }
+                    }
+
+                    for m in &measures {
+                        let sensor_topic_str = alloc::format!("{}/{}", topic_sensors_base, m.get_topic());
+                        let topic_sensor = TopicName::new(
+                            MqttString::from_str(&sensor_topic_str).unwrap()
+                        ).unwrap();
+
+                        let mut payload: String<255> = String::new();
+                        m.to_json(&mut payload);
+
+                        let topic_reference = TopicReference::Name(topic_sensor);
+                        let pub_options = PublicationOptions::new(topic_reference);
+
+                        if let Err(e) = client.publish(
+                            &pub_options,
+                            rust_mqtt::Bytes::Borrowed(payload.as_bytes()),
+                        ).await {
+                            error!("[MQTT] Publish failed: {:?}", e);
+                            break;
+                        } else {
+                            info!("[MQTT] Published at {}: {}", sensor_topic_str.as_str(), payload.as_str());
+                        }
                     }
                 }
-            } else{
-                error!("[MQTT] Poll error: {:?}", poll);
-                break;
             }
-
-            //
-            //  PUBLISH SENSORS MEASUREMENTS
-            //
-
-            // TODO: This code is copied from telemetry task in wifi.rs
-            // TODO: wrap in a feature
-            let mut measures: Vec<Measurements, SENSOR_CH_CAP> = Vec::new();
-            while let Some(m) = sensor_channel.try_next_message_pure() {
-                let _ = measures.push(m);
-            }
-
-            let topic_reference = TopicReference::Name(topic_commands.clone());
-            let pub_options = PublicationOptions::new(topic_reference);
-
-            for m in &measures {
-                let mut payload: String<255> = String::new();
-                m.to_json(&mut payload);
-
-                if let Err(e) = client.publish(
-                    &pub_options,
-                    rust_mqtt::Bytes::Borrowed(payload.as_bytes()),
-                ).await {
-                    error!("[MQTT] Publish falló: {:?}", e);
-                    break;
-                } else {
-                    info!("[MQTT] Publicado: {}", payload.as_str());
-                }
-            }
-
-            Timer::after(Duration::from_secs(2)).await;
         }
 
         client.abort().await;
-        warn!("[MQTT] Conexión perdida. Reintentando en 5s...");
-        Timer::after(Duration::from_secs(5)).await;
+        warn!("[MQTT] Connection lost. Trying to reconnect after 5s...");
     }
 }
