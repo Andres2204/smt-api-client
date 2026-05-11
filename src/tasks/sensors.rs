@@ -26,7 +26,7 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
         match bme1.measure().await {
             Ok(m) => {
                 info!("Sending BME280:2 measurementes {}", &m);
-                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+                sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_e) => {
                 error!("Error measuring BME280:3 sensor on {}", address);
             }
@@ -35,7 +35,7 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
         match bme2.measure().await {
             Ok(m) => {
                 info!("Sending BME280:3 measurementes {}", &m);
-                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+                sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_e) => {
                 error!("Error measuring BME280:3 sensor on {}", address);
             }
@@ -44,7 +44,7 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
         match bme3.measure().await {
             Ok(m) => {
                 info!("Sending BME280:4 measurementes {}", &m);
-                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+                sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_e) => {
                 error!("Error measuring BME280:4 sensor on {}", address);
             }
@@ -86,7 +86,7 @@ where I2C: embedded_hal_async::i2c::I2c
         match bme280.measure().await {
             Ok(m) => {
                 info!("Sending BME280:{} measurementes {}", channel, &m);
-                sensor_channel.publish(Measurements::BME280((m.temperature, m.humidity, m.pressure))).await;}
+                sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_) => {
                 error!("Error measuring BME280:{} sensor on", channel);
             }
@@ -111,7 +111,7 @@ pub async fn bh1750_task(i2c_bus: I2cDevice<'static, NoopRawMutex, I2c<'static, 
         };
 
         debug!("Sending BH1750 lux measure {}", lux);
-        sensor_channel.publish(Measurements::BH1750(lux)).await;
+        sensor_channel.publish_immediate(Measurements::BH1750(lux));
 
         Timer::after(Duration::from_secs(2)).await;
     }
