@@ -12,6 +12,7 @@ use bh1750_embedded::Resolution;
 use crate::drivers::tca9548a::{Tca9548a, TcaChannel};
 
 // TODO: dynamic recon of devices
+// TODO: Configurable measure time
 
 #[task]
 pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_channel: DynPublisher<'static, Measurements>) {
@@ -25,7 +26,7 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
     loop {
         match bme1.measure().await {
             Ok(m) => {
-                info!("Sending BME280:2 measurementes {}", &m);
+                debug!("Sending BME280:2 measurementes: {}", &m);
                 sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_e) => {
                 error!("Error measuring BME280:3 sensor on {}", address);
@@ -34,7 +35,7 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
 
         match bme2.measure().await {
             Ok(m) => {
-                info!("Sending BME280:3 measurementes {}", &m);
+                debug!("Sending BME280:3 measurementes {}", &m);
                 sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_e) => {
                 error!("Error measuring BME280:3 sensor on {}", address);
@@ -43,14 +44,14 @@ pub async fn bme280_sequential_task(tca: Tca9548a<I2c<'static, Async>> , sensor_
 
         match bme3.measure().await {
             Ok(m) => {
-                info!("Sending BME280:4 measurementes {}", &m);
+                debug!("Sending BME280:4 measurementes {}", &m);
                 sensor_channel.publish_immediate(Measurements::BME280((m.temperature, m.humidity, m.pressure)));}
             Err(_e) => {
                 error!("Error measuring BME280:4 sensor on {}", address);
             }
         }
 
-        Timer::after(Duration::from_secs(2)).await;
+        Timer::after(Duration::from_secs(10)).await;
     }
 }
 
