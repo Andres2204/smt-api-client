@@ -3,7 +3,7 @@
 ## Note:
 This project is an early version of [SmartPotTech](https://github.com/SmartPotTech) esp32 firmware.
 
----
+
 SmartPot is an IoT system designed for plant monitoring and automation, built around an ESP32 that collects sensor data and communicates it via MQTT to other services. The project is designed with a modular architecture in Rust, using asynchronous tasks and channel-based communication to decouple data acquisition, connectivity, and command processing.
 
 The device can send measurements such as temperature, humidity, or other environmental data to an MQTT broker, as well as receive remote commands to control actuators or modify the system’s behavior. Communication uses TLS to secure connections, and the project aims to implement its own low-level components, including embedded drivers and direct hardware management.
