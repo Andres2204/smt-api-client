@@ -32,6 +32,15 @@ impl Measurements {
             }
         };
     }
+
+    pub fn get_topic(&self) -> &str {
+        match self {
+            Measurements::BME280(_) => "bme280",
+            Measurements::BH1750(_) => "lux",
+            Measurements::PH(_) => "ph",
+            Measurements::TDS(_) => "tds",
+        }
+    }
 }
 
 pub const SENSOR_CH_CAP: usize = 8;
