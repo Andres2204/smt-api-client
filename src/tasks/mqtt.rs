@@ -30,6 +30,7 @@ const BROKER_PORT: u16 = 8883;
 const TOPIC_PREFIX: &str = "smartpot/v1/";
 
 // TODO: separate task responsabilities
+// TODO: Topic array with FnOne to handle
 
 #[task]
 pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut sensor_channel: DynSubscriber<'static, Measurements>, commands_channel: DynPublisher<'static, Command>) {
@@ -127,10 +128,17 @@ pub async fn mqtt_task(stack: Stack<'static>, rng: esp_hal::rng::Trng, mut senso
                                 let topic = &publication.topic;
                                 let message = publication.message.as_bytes();
                                 let msg_str = str::from_utf8(message).unwrap();
+                                info!("[MQTT SUB] from {}: {}", topic, &msg_str);
 
-                                info!("[MQTT SUB] from {}: {}", topic, msg_str);
-                                commands_channel.publish_immediate(Command::Activate(Actuators::Humidifier));
-                                // send commands trough command_channel (publish_inmediate())
+                                if let Some((cmd, arg)) = msg_str.split_once(':') {
+                                    let command = Command::new(cmd, arg);
+                                    match command {
+                                        Ok(c) => commands_channel.publish_immediate(c),
+                                        Err(_) => warn!("[MQTT SUB] Unknown command: {}", msg_str)
+                                    }
+                                } else {
+                                    warn!("[MQTT SUB] Invalid format: {}", msg_str);
+                                }
                             }
                             _ => {
                                 info!("[MQTT] received event {}", event);
