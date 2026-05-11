@@ -59,6 +59,18 @@ pub enum Actuators {
     Humidifier,
 }
 
+
+impl Actuators {
+    fn from_str(s: &str) -> Result<Self, ()> {
+        match s {
+            "water_pump" => Ok(Self::WaterPump),
+            "lights" => Ok(Self::Lights),
+            "humidifier" => Ok(Self::Humidifier),
+            _ => Err(()),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Format)]
 pub enum Command {
     Activate(Actuators),
@@ -67,6 +79,24 @@ pub enum Command {
 }
 
 unsafe impl Send for Command {}
+
+impl Command {
+    pub fn new(action: &str, arg: &str) -> Result<Self, ()> {
+        match action {
+            "activate" => {
+                let actuator = Actuators::from_str(arg)?;
+                Ok(Command::Activate(actuator))
+
+            },
+            "disable" => {
+                let actuator = Actuators::from_str(arg)?;
+                Ok(Command::Disable(actuator))
+            },
+            _ => Err(())
+        }
+    }
+
+}
 
 pub const COMMAND_CH_CAP: usize = 8;
 pub const COMMAND_CH_PUB: usize = 1;
