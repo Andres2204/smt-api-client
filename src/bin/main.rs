@@ -26,7 +26,7 @@ use embassy_sync::pubsub::PubSubChannel;
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 
 use smt_api_client::drivers::tca9548a::Tca9548a;
-use smt_api_client::events::{Measurements, SENSOR_CH};
+use smt_api_client::events::{Measurements, SENSOR_CH, COMMAND_CH};
 use smt_api_client::tasks::wifi::{net_task, telemetry_task, wifi_connection_task};
 extern crate alloc;
 
@@ -97,16 +97,21 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             .into_async();
         let _i2c_bus = I2C_BUS.init(Mutex::new(i2c));
 
+        #[cfg(feature = "actuators")]
+        _spawner.spawn(smt_api_client::tasks::command::catch_commands(
+            COMMAND_CH.dyn_subscriber().unwrap()
+        ).expect("Failed to create catch_commands task"));
+
         #[cfg(feature = "sensors")]
         {
             // i2c scanner
-            _spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(I2cDevice::new(_i2c_bus)));
+            _spawner.spawn(smt_api_client::i2c_scanner::scan_i2c(I2cDevice::new(_i2c_bus)).expect("Failed to scan I2C task"));
 
             let tca = Tca9548a::new(_i2c_bus, 0x70);
             _spawner.spawn(smt_api_client::tasks::sensors::bme280_sequential_task(
                 tca,
                 SENSOR_CH.dyn_publisher().unwrap(),
-            ));
+            ).expect("Failed to launch bme280 sensors task"));
         }
 
         /*
@@ -199,6 +204,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         > = ConstStaticCell::new(PubSubChannel::new());
         let dtec = DIVIDE_TO_EXTERIOR_CHANNEL.take();
 
+
         spawner.spawn(net_task(runner).expect("Error in net_task"));
         spawner.spawn(
             wifi_connection_task(wifi_controller, SSID, PASSWORD)
@@ -219,7 +225,12 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         ));
 
         #[cfg(feature = "mqtt")]
-        spawner.spawn(smt_api_client::tasks::mqtt::mqtt_task(_stack, trng.clone()).expect("error in mqtt"));
+        spawner.spawn(smt_api_client::tasks::mqtt::mqtt_task(
+            _stack,
+            trng.clone(),
+            SENSOR_CH.dyn_subscriber().unwrap(),
+            COMMAND_CH.dyn_publisher().unwrap()
+        ).expect("Error Running MQTT task"));
     }
 
     loop {
