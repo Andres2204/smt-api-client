@@ -114,6 +114,6 @@ pub async fn bh1750_task(i2c_bus: I2cDevice<'static, NoopRawMutex, I2c<'static, 
         debug!("Sending BH1750 lux measure {}", lux);
         sensor_channel.publish_immediate(Measurements::BH1750(lux));
 
-        Timer::after(Duration::from_secs(2)).await;
+        Timer::after(Duration::from_secs(10)).await;
     }
 }

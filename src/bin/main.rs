@@ -86,6 +86,11 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
     let sda = peripherals.GPIO21;
     let scl = peripherals.GPIO22;
 
+    // actuators piout
+    let water_pin = peripherals.GPIO25;
+    let lights_pin = peripherals.GPIO26;
+    let humidifier_pin = peripherals.GPIO5;
+
     let _software_interrupt = sw_int.software_interrupt2;
     let cpu1_main = move |_spawner: embassy_executor::Spawner| {
         debug!("Launching i2c sensor tasks");
@@ -98,9 +103,21 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
         let _i2c_bus = I2C_BUS.init(Mutex::new(i2c));
 
         #[cfg(feature = "actuators")]
-        _spawner.spawn(smt_api_client::tasks::command::catch_commands(
-            COMMAND_CH.dyn_subscriber().unwrap()
-        ).expect("Failed to create catch_commands task"));
+        {
+            use esp_hal::gpio::{Output, OutputConfig, Level};
+
+            let mut water = Output::new(water_pin, Level::High, OutputConfig::default());
+            let mut lights = Output::new(lights_pin, Level::High, OutputConfig::default());
+            let mut humidifier = Output::new(humidifier_pin, Level::High, OutputConfig::default());
+
+            _spawner.spawn(smt_api_client::tasks::command::catch_commands(
+                COMMAND_CH.dyn_subscriber().unwrap(),
+                water,
+                lights,
+                humidifier
+            ).expect("Failed to create catch_commands task"));
+        }
+
 
         #[cfg(feature = "sensors")]
         {
@@ -112,7 +129,14 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
                 tca,
                 SENSOR_CH.dyn_publisher().unwrap(),
             ).expect("Failed to launch bme280 sensors task"));
+
+            _spawner.spawn(smt_api_client::tasks::sensors::bh1750_task(
+                I2cDevice::new(_i2c_bus),
+                SENSOR_CH.dyn_publisher().unwrap()
+            ).expect("Failed to launch bh1750_sensors task"));
         }
+
+
 
         /*
         let tca = Tca9548a::new(i2c_bus, 0x70);
@@ -130,9 +154,7 @@ async fn main(spawner: embassy_executor::Spawner) -> ! {
             SENSOR_CH.dyn_publisher().unwrap(),
             0x76));
 
-        spawner.spawn(smt_api_client::tasks::sensors::bh1750_task(
-            I2cDevice::new(i2c_bus), // seguir usando el bus normal sin el multiplexor,
-            SENSOR_CH.dyn_publisher().unwrap()));
+
         */
     };
 

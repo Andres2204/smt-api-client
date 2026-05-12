@@ -20,7 +20,7 @@ use rust_mqtt::client::event::Event;
 use rust_mqtt::client::options::TopicReference;
 use rust_mqtt::config::KeepAlive;
 use heapless::{String, Vec};
-use crate::events::{Actuators, Command, Measurements, SENSOR_CH_CAP};
+use crate::events::{Command, Measurements, SENSOR_CH_CAP};
 
 // BROKER
 const BROKER_IP: &str = "192.168.58.176"; // broker.emqx.io TODO: impl dns if using domain name

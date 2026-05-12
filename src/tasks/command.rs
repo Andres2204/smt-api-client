@@ -1,17 +1,32 @@
-use defmt::{info, error};
+use defmt::info;
 use embassy_executor::task;
 use embassy_sync::pubsub::DynSubscriber;
-use embassy_time::{Timer, Duration};
-use crate::events::Command;
+use esp_hal::gpio::Output;
+
+use crate::events::{Actuators, Command};
 
 #[task]
-pub async fn catch_commands(mut command_channel: DynSubscriber<'static, Command>) {
+pub async fn catch_commands(mut command_channel: DynSubscriber<'static, Command>, mut w: Output<'static>, mut l: Output<'static>, mut h: Output<'static>) {
     loop {
-        let command = command_channel.try_next_message_pure();
-        if let Some(c) = command {
-            info!("Received command {}", c);
-        }
+        let command = command_channel.next_message_pure().await;
 
-        Timer::after(Duration::from_secs(2)).await;
+        info!("Command received: {:?}", command);
+        match command {
+            Command::Activate(actuator) => match actuator {
+                Actuators::WaterPump => w.set_high(),
+                Actuators::Lights => l.set_high(),
+                Actuators::Humidifier => h.set_high(),
+            },
+
+            Command::Disable(actuator) => match actuator {
+                Actuators::WaterPump => w.set_low(),
+                Actuators::Lights => l.set_low(),
+                Actuators::Humidifier => h.set_low(),
+            },
+
+            Command::Threshold(_) => {
+                // TODO
+            }
+        }
     }
 }
